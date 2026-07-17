@@ -35,7 +35,7 @@ from oddsockets import OddSockets
 async def main():
     client = OddSockets(
         api_key='ak_live_1234567890abcdef',
-        manager_url='https://manager1.oddsockets.tyga.network'
+        manager_url='https://connect.oddsockets.tyga.network'
     )
     
     channel = client.channel('my-channel')
@@ -63,7 +63,7 @@ from oddsockets.sync import OddSockets
 
 client = OddSockets(
     api_key='ak_live_1234567890abcdef',
-    manager_url='https://manager1.oddsockets.tyga.network'
+    manager_url='https://connect.oddsockets.tyga.network'
 )
 
 channel = client.channel('my-channel')
@@ -239,7 +239,7 @@ OddSockets Python SDK delivers superior performance:
 # settings.py
 ODDSOCKETS = {
     'API_KEY': 'ak_live_1234567890abcdef',
-    'MANAGER_URL': 'https://manager1.oddsockets.tyga.network'
+    'MANAGER_URL': 'https://connect.oddsockets.tyga.network'
 }
 
 # views.py

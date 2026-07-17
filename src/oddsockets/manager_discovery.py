@@ -22,7 +22,7 @@ class ManagerDiscovery:
     """
     
     def __init__(self):
-        self.manager_url = 'https://manager1.oddsockets.tyga.network'
+        self.manager_url = 'https://connect.oddsockets.tyga.network'
     
     async def discover_manager_url(self, api_key: str) -> str:
         """
