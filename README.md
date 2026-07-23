@@ -1,6 +1,6 @@
 # OddSockets Python SDK
 
-[![PyPI version](https://badge.fury.io/py/oddsocketsai-python-sdk.svg)](https://badge.fury.io/py/oddsocketsai-python-sdk)
+[![PyPI version](https://badge.fury.io/py/oddsockets.svg)](https://pypi.org/project/oddsockets/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 
@@ -19,9 +19,9 @@ Official Python SDK for OddSockets real-time messaging platform.
 ## Installation
 
 ```bash
-pip install oddsocketsai-python-sdk
+pip install oddsockets
 # or
-poetry add oddsocketsai-python-sdk
+poetry add oddsockets
 ```
 
 ## 🏃‍♂️ Quick Start
@@ -33,11 +33,11 @@ import asyncio
 from oddsockets import OddSockets
 
 async def main():
-    client = OddSockets(
-        api_key='ak_live_1234567890abcdef',
-        manager_url='https://connect.oddsockets.tyga.network'
-    )
-    
+    client = OddSockets({
+        'api_key': 'ak_live_1234567890abcdef',
+        'user_id': 'server-user-123'
+    })
+
     channel = client.channel('my-channel')
     
     # Subscribe to messages
@@ -108,11 +108,12 @@ pubnub.subscribe().channels(['my-channel']).execute()
 
 ```python
 from typing import Dict, Any
-from oddsockets import OddSockets, Channel, Message
+from oddsockets import OddSockets, Channel
+from oddsockets.types import Message
 
-client: OddSockets = OddSockets(
-    api_key='ak_live_1234567890abcdef'
-)
+client: OddSockets = OddSockets({
+    'api_key': 'ak_live_1234567890abcdef'
+})
 
 channel: Channel = client.channel('typed-channel')
 
@@ -144,14 +145,15 @@ Explore our comprehensive examples:
 ```python
 from oddsockets import OddSockets
 
-client = OddSockets(
-    api_key='your-api-key',           # Required: Your OddSockets API key
-    manager_url='manager-url',        # Optional: Manager URL
-    user_id='user-id',                # Optional: User identifier
-    auto_connect=True,                # Optional: Auto-connect on creation
-    reconnect_attempts=5,             # Optional: Max reconnection attempts
-    heartbeat_interval=30.0           # Optional: Heartbeat interval (seconds)
-)
+client = OddSockets({
+    'api_key': 'your-api-key',          # Required: Your OddSockets API key
+    'user_id': 'user-id',               # Optional: User identifier
+    'options': {                        # Optional: connection options
+        'auto_connect': True,           #   Auto-connect on creation
+        'reconnect_attempts': 5,        #   Max reconnection attempts
+        'heartbeat_interval': 30.0      #   Heartbeat interval (seconds)
+    }
+})
 ```
 
 ### Channel Options
@@ -173,6 +175,74 @@ await channel.publish(
     store_in_history=True             # Store in message history
 )
 ```
+
+## Enhanced Features
+
+Beyond core pub/sub, OddSockets ships a Slack-like **enhanced surface** — reactions,
+typing indicators, threads, read receipts, presence/status, notifications, DMs,
+channel management, message editing and search. It lives on `client.enhanced`. The
+pattern is always the same:
+
+1. **Send** an action with an `await client.enhanced.*` coroutine (snake_case).
+2. **Receive** the paired broadcast with `client.on('<event>', handler)`.
+
+```python
+import asyncio
+from oddsockets import OddSockets
+
+async def main():
+    client = OddSockets({'api_key': 'ak_live_1234567890abcdef', 'user_id': 'alice'})
+    channel = client.channel('room-42')
+    await channel.subscribe()
+
+    # Receive-path: broadcasts from other users on the channel
+    client.on('user_typing', lambda e: print(f"{e['userId']} is typing"))
+    client.on('reaction_added', lambda e: print(f"{e['userId']} reacted {e['emoji']}"))
+    client.on('thread_reply', lambda e: print('New reply:', e))
+
+    # Send-path: enhanced actions over the live socket
+    await client.enhanced.start_typing('alice', 'room-42')
+    await client.enhanced.add_reaction(
+        message_id='msg-1',
+        channel='room-42',
+        emoji=':thumbsup:',
+        user_id='alice',
+        user_name='Alice'
+    )
+    await client.enhanced.thread_reply(
+        channel='room-42',
+        parent_message_id='msg-1',
+        message='Replying in the thread',
+        user_id='alice',
+        user_name='Alice'
+    )
+
+    await asyncio.sleep(2)
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
+Each area exposes coroutine methods on `client.enhanced`; the worker broadcasts the
+paired events which you handle with `client.on(...)`. Query methods (`get_*`,
+`search_*`) await and return the worker response.
+
+| Area | Requests (`await client.enhanced.*`) | Broadcast events (`client.on`) |
+|------|--------------------------------------|--------------------------------|
+| Typing | `start_typing`, `stop_typing` | `user_typing`, `user_stopped_typing` |
+| Reactions | `add_reaction`, `remove_reaction`, `get_reactions` | `reaction_added`, `reaction_removed` |
+| Threads | `thread_reply`, `get_thread`, `subscribe_thread`, `follow_thread`, `mark_thread_read` | `thread_reply`, `thread_subscribed`, `thread_followed`, `thread_read_updated` |
+| Read receipts | `mark_read`, `mark_all_read`, `get_unread_counts` | `user_read`, `unread_count_updated`, `all_marked_read` |
+| Messages | `edit_message`, `delete_message`, `pin_message`, `unpin_message`, `get_pinned_messages`, `search_messages` | `message_edited`, `message_deleted`, `message_pinned`, `message_unpinned` |
+| Presence & status | `set_status`, `set_custom_status`, `set_dnd`, `get_user_presence` | `user_status_changed`, `custom_status_updated`, `dnd_status_changed` |
+| Channels | `create_channel`, `update_channel`, `archive_channel`, `invite_to_channel`, `join_channel`, `leave_channel` | `channel_created`, `channel_updated`, `user_invited`, `user_joined_channel`, `user_left_channel` |
+| DMs | `create_dm`, `send_dm`, `get_dm_conversations` | `dm_created`, `dm_received` |
+| Notifications | `subscribe_notifications`, `get_notifications`, `mark_notification_read`, `clear_notifications` | `notification`, `notification_read`, `notifications_cleared` |
+| File uploads | `start_file_upload`, `upload_progress`, `upload_complete` | `file_upload_completed`, `file_upload_progress`, `file_upload_failed` |
+
+For any worker event not wrapped above, subscribe with the raw
+`client.on('<event>', handler)` API — all enhanced broadcasts are forwarded onto the
+client surface.
 
 ## 🐍 Python Support
 
@@ -310,7 +380,7 @@ OddSockets is available in multiple languages:
 
 ## 📞 Support
 
-- **[GitHub Issues](https://github.com/tygacloud/oddsocketsai-python-sdk/issues)** - Bug reports and feature requests
+- **[GitHub Issues](https://github.com/jyswee/oddsockets-python-sdk/issues)** - Bug reports and feature requests
 - **[Documentation](https://docs.oddsockets.com)** - Complete documentation
 - **[Community Discord](https://discord.gg/oddsockets)** - Community support
 - **Email**: support@oddsockets.com
