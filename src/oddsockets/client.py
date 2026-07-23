@@ -29,7 +29,23 @@ class OddSockets:
     Provides a simple interface to the OddSockets real-time messaging platform.
     Automatically handles manager discovery and Worker load balancing internally.
     """
-    
+
+    # Enhanced-feature broadcast events the worker delivers to other members of a
+    # room. Forwarded onto the client event surface so apps can subscribe with
+    # client.on(name).
+    ENHANCED_BROADCAST_EVENTS = [
+        'reaction_added', 'reaction_removed',
+        'user_typing', 'user_stopped_typing',
+        'user_read', 'unread_count_updated', 'all_marked_read',
+        'thread_reply', 'thread_subscribed', 'thread_followed', 'thread_unfollowed', 'thread_read_updated',
+        'message_edited', 'message_deleted', 'message_pinned', 'message_unpinned',
+        'user_status_changed', 'custom_status_updated', 'custom_status_cleared', 'dnd_status_changed', 'status_updated',
+        'file_upload_completed', 'file_upload_progress', 'file_upload_failed',
+        'dm_created', 'dm_received',
+        'notification', 'notification_read', 'all_notifications_read', 'notifications_cleared',
+        'channel_created', 'channel_updated', 'user_invited', 'user_joined_channel', 'user_left_channel', 'user_removed',
+    ]
+
     def __init__(self, config: Dict[str, Any]):
         """
         Create an OddSockets client
@@ -344,7 +360,19 @@ class OddSockets:
             channel = self.channels.get(data.get('channel'))
             if channel:
                 channel._handle_history(data)
-    
+
+        # Forward enhanced-feature broadcasts to the client event surface so apps can
+        # listen with client.on('reaction_added', handler), etc. These are the events
+        # the worker broadcasts to OTHER members of a room; the request/response acks
+        # consumed by EnhancedFeatures methods are intentionally not in this list.
+        def _make_forwarder(event_name):
+            async def _forward(data=None):
+                self._emit(event_name, data)
+            return _forward
+
+        for event in OddSockets.ENHANCED_BROADCAST_EVENTS:
+            self.socket.on(event, _make_forwarder(event))
+
     async def _schedule_reconnect(self):
         """
         Internal: Schedule reconnection with exponential backoff

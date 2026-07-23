@@ -26,7 +26,7 @@ class EnhancedFeatures:
         """Get socket instance, raising error if not connected."""
         if not self.client._is_connected():
             raise RuntimeError("Not connected to OddSockets")
-        return self.client.sio
+        return self.client._get_socket()
 
     # ==================== THREAD EVENTS ====================
 
