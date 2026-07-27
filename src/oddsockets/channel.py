@@ -296,7 +296,12 @@ class Channel:
             history_future = asyncio.Future()
             
             async def on_history(data):
-                if data.get('channel') == self.name:
+                # Only resolve on the explicit get_history RESPONSE (query:True). The
+                # worker also emits 'history' as a fire-and-forget on-join snapshot
+                # (capped at ~10 local messages, no query flag); without this guard
+                # get_history() could resolve with that snapshot instead of the
+                # requested count from the shared store. BUG-2026-0727-0012.
+                if data.get('channel') == self.name and data.get('query') is True:
                     if not history_future.done():
                         history_future.set_result(data.get('messages', []))
             
