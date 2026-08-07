@@ -14,7 +14,7 @@ from typing import Dict, Optional, Any, List
 from datetime import datetime
 import json
 
-from .manager_discovery import manager_discovery
+from .manager_discovery import ManagerDiscovery
 from .channel import Channel
 from .exceptions import OddSocketsError, ConnectionError, AuthenticationError
 from .enhanced_features import EnhancedFeatures
@@ -53,18 +53,26 @@ class OddSockets:
         Args:
             config: Configuration dictionary with keys:
                 - api_key: Your OddSockets API key (required)
+                - manager_url: Manager URL (optional, falls back to the
+                  ODDSOCKETS_MANAGER_URL environment variable and then to the
+                  hosted endpoint)
                 - user_id: User ID (optional, defaults to API key's user)
                 - options: Additional connection options (optional)
         """
         if not config or not config.get('api_key'):
             raise ValueError('API key is required')
-        
+
+        # Resolved here so an invalid manager URL is rejected up front rather
+        # than quietly sending traffic somewhere the caller did not ask for.
+        self.manager_discovery = ManagerDiscovery(config.get('manager_url'))
+
         self.config = {
             'api_key': config['api_key'],
+            'manager_url': self.manager_discovery.manager_url,
             'user_id': config.get('user_id'),
             'options': config.get('options', {})
         }
-        
+
         self.socket = None
         self.worker_url = None
         self.worker_id = None
@@ -223,9 +231,10 @@ class OddSockets:
         Internal: Get worker assignment from manager
         """
         try:
-            # Discover the optimal manager URL automatically
-            manager_url = await manager_discovery.discover_manager_url(self.config['api_key'])
-            
+            # The configured manager is used as-is; there is no alternative
+            # endpoint to fall back to if it is unreachable.
+            manager_url = await self.manager_discovery.discover_manager_url(self.config['api_key'])
+
             params = {
                 'apiKey': self.config['api_key'],
                 'userId': self.config.get('user_id') or self.client_identifier,
@@ -260,14 +269,16 @@ class OddSockets:
                         'worker_url': self.worker_url,
                         'session': self.session_info,
                         'client_identifier': self.client_identifier,
-                        'manager_url': manager_url  # Include discovered manager URL for debugging
+                        'manager_url': manager_url  # Manager the worker was assigned by
                     })
-                    
-        except Exception as error:
-            # If manager is offline, try fallback logic
-            if 'Connection refused' in str(error) or 'Name or service not known' in str(error):
-                raise ConnectionError('Manager is offline. Cannot assign worker without session stickiness.')
-            raise error
+
+        except aiohttp.ClientConnectorError as error:
+            # Classified on the exception type rather than its wording: aiohttp
+            # raises this for refused connections and name resolution failures,
+            # and the message text differs per platform and library version.
+            raise ConnectionError(
+                'Manager is offline. Cannot assign worker without session stickiness.'
+            ) from error
     
     async def _connect_to_worker(self):
         """

@@ -8,7 +8,12 @@ Automatically handles manager discovery and Worker load balancing internally.
 
 from .client import OddSockets
 from .channel import Channel
-from .manager_discovery import manager_discovery
+from .manager_discovery import (
+    ManagerDiscovery,
+    resolve_manager_url,
+    DEFAULT_MANAGER_URL,
+    MANAGER_URL_ENV_VAR,
+)
 from .enhanced_features import EnhancedFeatures
 from .exceptions import (
     OddSocketsError,
@@ -27,6 +32,9 @@ def create(config):
     Args:
         config: Configuration dictionary with keys:
             - api_key: Your OddSockets API key (required)
+            - manager_url: Manager URL (optional, falls back to the
+              ODDSOCKETS_MANAGER_URL environment variable and then to the
+              hosted endpoint)
             - user_id: User ID (optional, defaults to API key's user)
             - options: Additional connection options (optional)
     
@@ -42,8 +50,11 @@ __all__ = [
     "EnhancedFeatures",
     
     # Manager discovery
-    "manager_discovery",
-    
+    "ManagerDiscovery",
+    "resolve_manager_url",
+    "DEFAULT_MANAGER_URL",
+    "MANAGER_URL_ENV_VAR",
+
     # Factory functions
     "create",
     
