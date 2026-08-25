@@ -146,7 +146,7 @@ Explore our comprehensive examples:
 from oddsockets import OddSockets
 
 client = OddSockets({
-    'api_key': 'your-api-key',          # Required: Your OddSockets API key
+    'api_key': 'your-api-key',          # Your OddSockets API key (or use token_provider)
     'user_id': 'user-id',               # Optional: User identifier
     'options': {                        # Optional: connection options
         'auto_connect': True,           #   Auto-connect on creation
@@ -154,6 +154,40 @@ client = OddSockets({
         'heartbeat_interval': 30.0      #   Heartbeat interval (seconds)
     }
 })
+```
+
+Provide **either** `api_key` **or** `token_provider`.
+
+### Token auth for game clients (`token_provider`)
+
+Game clients should never ship a raw API key. Instead, exchange the player's own
+signed JWT for a short-lived, scoped OddSockets token at the OddSockets token
+front door, and hand the SDK a `token_provider` callback that returns it. The SDK
+presents the token on the connection handshake and **silently refreshes it** —
+both shortly before it expires and on every reconnect — so the connection never
+lapses.
+
+```python
+import aiohttp
+
+async def token_provider():
+    # Called for every (re)connect and by the pre-expiry refresh timer.
+    # Return the token string, or a dict {token, expires_at/expiresAt, exp}.
+    async with aiohttp.ClientSession() as http:
+        async with http.post(
+            'https://connect.oddsockets.tyga.network/v1/token',
+            headers={'Authorization': f'Bearer {my_player_jwt}'},  # the player's own game JWT
+            json={'channels': ['match:9', 'lobby']}                # optional least-privilege scoping
+        ) as res:
+            return await res.json()  # {token, expiresAt, ...}
+
+client = OddSockets({
+    'user_id': 'player_42',
+    'token_provider': token_provider,
+    'token_refresh_lead_ms': 120000,   # Optional: refresh this long before expiry (default 2 min)
+})
+
+client.on('token_refreshed', lambda info: None)  # Optional: observe silent refreshes.
 ```
 
 ### Channel Options

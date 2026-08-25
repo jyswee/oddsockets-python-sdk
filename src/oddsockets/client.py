@@ -52,22 +52,37 @@ class OddSockets:
         
         Args:
             config: Configuration dictionary with keys:
-                - api_key: Your OddSockets API key (required)
+                - api_key: Your OddSockets API key (required unless token_provider
+                  is supplied)
+                - token_provider: Async callable returning a fresh minted realtime
+                  token, used INSTEAD of api_key by game clients that exchange a
+                  player JWT for a short-lived scoped token via the OddSockets
+                  /v1/token front door. Called before every (re)connect and again
+                  shortly before the token expires. May return a token string or a
+                  dict {token, expires_at/expiresAt, exp, base_url}.
+                  (FEAT-2026-0824-0040)
+                - token_refresh_lead_ms: Refresh a minted token this many
+                  milliseconds before it expires (optional, default 120000)
                 - manager_url: Manager URL (optional, falls back to the
                   ODDSOCKETS_MANAGER_URL environment variable and then to the
                   hosted endpoint)
                 - user_id: User ID (optional, defaults to API key's user)
                 - options: Additional connection options (optional)
         """
-        if not config or not config.get('api_key'):
-            raise ValueError('API key is required')
+        token_provider = config.get('token_provider') if config else None
+        # Either a static API key OR an async token_provider callback is required.
+        # Game clients (front-door auth) carry no API key. (FEAT-2026-0824-0040)
+        if not config or (not config.get('api_key') and not callable(token_provider)):
+            raise ValueError('Either an API key or a token_provider callback is required')
 
         # Resolved here so an invalid manager URL is rejected up front rather
         # than quietly sending traffic somewhere the caller did not ask for.
         self.manager_discovery = ManagerDiscovery(config.get('manager_url'))
 
         self.config = {
-            'api_key': config['api_key'],
+            'api_key': config.get('api_key'),
+            'token_provider': token_provider,
+            'token_refresh_lead_ms': config.get('token_refresh_lead_ms', 120000),
             'manager_url': self.manager_discovery.manager_url,
             'user_id': config.get('user_id'),
             'options': config.get('options', {})
@@ -83,6 +98,10 @@ class OddSockets:
         self.reconnect_delay = 1000  # Start with 1 second
         self.client_identifier = self._generate_client_identifier()
         self.session_info = None
+        # Minted-token state (token mode only). (FEAT-2026-0824-0040)
+        self._token = None
+        self._token_expires_at = None  # epoch milliseconds
+        self._token_refresh_task = None
         
         # Initialize enhanced features (67 new Slack-like events)
         self.enhanced = EnhancedFeatures(self)
@@ -106,9 +125,15 @@ class OddSockets:
         self._emit('connecting')
         
         try:
+            # Step 0: In token mode, mint/refresh a realtime token before every
+            # (re)connect so the worker assignment and handshake carry a fresh
+            # credential rather than an API key. (FEAT-2026-0824-0040)
+            if self._is_token_mode():
+                await self._resolve_token()
+
             # Step 1: Get worker assignment from manager
             await self._get_worker_assignment()
-            
+
             # Step 2: Connect to assigned worker
             await self._connect_to_worker()
             
@@ -132,11 +157,16 @@ class OddSockets:
         Disconnect from the platform
         """
         self.connection_state = 'disconnected'
-        
+
+        # Stop any pending minted-token refresh. (FEAT-2026-0824-0040)
+        if self._token_refresh_task:
+            self._token_refresh_task.cancel()
+            self._token_refresh_task = None
+
         if self.socket:
             await self.socket.disconnect()
             self.socket = None
-        
+
         self.worker_url = None
         self.worker_id = None
         self._emit('disconnected')
@@ -235,11 +265,16 @@ class OddSockets:
             # endpoint to fall back to if it is unreachable.
             manager_url = await self.manager_discovery.discover_manager_url(self.config['api_key'])
 
+            # In token mode present the minted token (not an API key) to the
+            # manager. (FEAT-2026-0824-0040 / FEAT-2026-0824-0041)
             params = {
-                'apiKey': self.config['api_key'],
                 'userId': self.config.get('user_id') or self.client_identifier,
                 'clientIdentifier': self.client_identifier
             }
+            if self._is_token_mode():
+                params['token'] = self._token
+            else:
+                params['apiKey'] = self.config['api_key']
             
             headers = {
                 'User-Agent': 'OddSockets-Python-SDK/1.0.0'
@@ -293,11 +328,19 @@ class OddSockets:
         # Set up event handlers
         self._setup_socket_event_handlers()
         
-        # Connect with authentication
-        auth_data = {
-            'apiKey': self.config['api_key'],
-            'userId': self.config.get('user_id')
-        }
+        # Connect with authentication. In token mode present the minted token at
+        # the Socket.IO handshake; the worker verifies auth.token
+        # (FEAT-2026-0824-0039). Otherwise send the API key. (FEAT-2026-0824-0040)
+        if self._is_token_mode():
+            auth_data = {
+                'token': self._token,
+                'userId': self.config.get('user_id')
+            }
+        else:
+            auth_data = {
+                'apiKey': self.config['api_key'],
+                'userId': self.config.get('user_id')
+            }
         
         try:
             await self.socket.connect(
@@ -423,10 +466,124 @@ class OddSockets:
         """
         Internal: Generate consistent client identifier for session stickiness
         """
-        # Create a consistent identifier based on API key and user ID
-        base_id = self.config.get('user_id', 'default')
-        api_key_hash = self._hash_string(self.config['api_key'])
+        # Create a consistent identifier based on API key and user ID. Token-mode
+        # clients carry no API key, so fall back to a stable seed.
+        # (FEAT-2026-0824-0040)
+        base_id = self.config.get('user_id') or 'default'
+        seed = self.config.get('api_key') or 'token-client'
+        api_key_hash = self._hash_string(seed)
         return f"{api_key_hash}_{base_id}"
+
+    def _is_token_mode(self) -> bool:
+        """Internal: is this client authenticating with a minted token vs an API key?"""
+        return callable(self.config.get('token_provider'))
+
+    async def _resolve_token(self):
+        """
+        Internal: call the configured token_provider, cache the fresh token and
+        its expiry, and schedule a refresh ahead of expiry. (FEAT-2026-0824-0040)
+        """
+        provider = self.config['token_provider']
+        result = provider()
+        if asyncio.iscoroutine(result):
+            result = await result
+
+        if not result:
+            raise ConnectionError('token_provider returned no token')
+
+        # Accept either a bare token string or a dict {token, expires_at/expiresAt,
+        # exp, base_url}, mirroring the OddSockets /v1/token mint response shape.
+        expires_at_ms = None
+        if isinstance(result, str):
+            token = result
+        else:
+            token = result.get('token')
+            raw_expires = result.get('expires_at', result.get('expiresAt'))
+            if raw_expires is not None:
+                if isinstance(raw_expires, (int, float)):
+                    # < 1e12 => epoch seconds, else already milliseconds.
+                    expires_at_ms = raw_expires * 1000 if raw_expires < 1e12 else raw_expires
+                else:
+                    expires_at_ms = self._parse_iso_ms(raw_expires)
+            elif isinstance(result.get('exp'), (int, float)):
+                expires_at_ms = result['exp'] * 1000
+
+        if not token or not isinstance(token, str):
+            raise ConnectionError('token_provider returned an invalid token')
+
+        # Fall back to the JWT's own exp claim if the provider gave no expiry.
+        if expires_at_ms is None:
+            expires_at_ms = self._expiry_from_jwt(token)
+
+        self._token = token
+        self._token_expires_at = expires_at_ms
+        self._schedule_token_refresh()
+
+    @staticmethod
+    def _parse_iso_ms(value: str):
+        """Internal: parse an ISO-8601 timestamp to epoch milliseconds, or None."""
+        try:
+            text = value.strip()
+            if text.endswith('Z'):
+                text = text[:-1] + '+00:00'
+            return int(datetime.fromisoformat(text).timestamp() * 1000)
+        except (ValueError, AttributeError):
+            return None
+
+    @staticmethod
+    def _expiry_from_jwt(token: str):
+        """
+        Internal: extract exp (epoch ms) from a JWT payload without verifying it.
+        Returns None on failure. (FEAT-2026-0824-0040)
+        """
+        try:
+            import base64
+            part = token.split('.')[1]
+            padded = part + '=' * (-len(part) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            exp = payload.get('exp')
+            return exp * 1000 if isinstance(exp, (int, float)) else None
+        except Exception:
+            return None
+
+    def _schedule_token_refresh(self):
+        """
+        Internal: schedule a task that re-mints the token shortly before it
+        expires and swaps it into the live handshake auth in place, with no
+        reconnect. Emits 'token_refreshed' on success, 'error' on failure.
+        (FEAT-2026-0824-0040)
+        """
+        # Cancel any pending refresh, but never the task we may be running inside
+        # (the refresh loop re-resolves and re-schedules from within itself).
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if self._token_refresh_task and self._token_refresh_task is not current:
+            self._token_refresh_task.cancel()
+        self._token_refresh_task = None
+
+        if not self._token_expires_at:
+            return
+
+        lead = self.config['token_refresh_lead_ms']
+        now_ms = datetime.now().timestamp() * 1000
+        delay = (self._token_expires_at - now_ms - lead) / 1000
+        if delay <= 0:
+            return  # Too close to expiry to usefully schedule; next connect re-resolves.
+
+        self._token_refresh_task = asyncio.create_task(self._token_refresh_loop(delay))
+
+    async def _token_refresh_loop(self, delay: float):
+        """Internal: sleep then refresh the minted token in place. (FEAT-2026-0824-0040)"""
+        try:
+            await asyncio.sleep(delay)
+            await self._resolve_token()
+            self._emit('token_refreshed', {'expires_at': self._token_expires_at})
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._emit('error', error)
     
     def _hash_string(self, string: str) -> str:
         """
