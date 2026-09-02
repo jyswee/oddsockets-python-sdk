@@ -44,6 +44,9 @@ class OddSockets:
         'dm_created', 'dm_received',
         'notification', 'notification_read', 'all_notifications_read', 'notifications_cleared',
         'channel_created', 'channel_updated', 'user_invited', 'user_joined_channel', 'user_left_channel', 'user_removed',
+        'challenge_progress', 'leaderboard_rank_change', 'challenge_complete',
+        'achievement_unlock', 'achievement_progress',
+        'challenge_invited', 'challenge_reply_received', 'challenge_invite_cancelled',
     ]
 
     def __init__(self, config: Dict[str, Any]):
@@ -324,7 +327,15 @@ class OddSockets:
         
         # Create Socket.IO client
         self.socket = socketio.AsyncClient()
-        
+
+        # python-socketio's AsyncClient exposes on() but no once(). The enhanced
+        # request/response methods (create_challenge, get_standings, get_thread,
+        # create_channel, ...) all register a one-shot success/error handler via
+        # socket.once(...). Provide a once() shim that registers through on() and
+        # de-registers itself the first time it fires, so those ack-bearing calls
+        # resolve instead of raising AttributeError. (BUG: missing once())
+        self._install_socket_once(self.socket)
+
         # Set up event handlers
         self._setup_socket_event_handlers()
         
@@ -352,6 +363,34 @@ class OddSockets:
         except Exception as error:
             raise ConnectionError(f"Failed to connect to worker: {str(error)}")
     
+    @staticmethod
+    def _install_socket_once(socket):
+        """
+        Internal: attach a once() method to a python-socketio AsyncClient.
+
+        AsyncClient only provides on(); the enhanced request/response helpers
+        expect once() (one-shot listener). This registers via on() and removes
+        the wrapper from socket.handlers[namespace] the first time it fires,
+        supporting both sync and async handlers.
+        """
+        if hasattr(socket, 'once'):
+            return
+
+        def once(event, handler, namespace=None):
+            ns = namespace or '/'
+
+            async def _wrapper(*args):
+                ns_handlers = socket.handlers.get(ns, {})
+                if ns_handlers.get(event) is _wrapper:
+                    del ns_handlers[event]
+                if asyncio.iscoroutinefunction(handler):
+                    return await handler(*args)
+                return handler(*args)
+
+            socket.on(event, _wrapper, namespace=namespace)
+
+        socket.once = once
+
     def _setup_socket_event_handlers(self):
         """
         Internal: Setup socket event handlers

@@ -719,5 +719,269 @@ class EnhancedFeatures:
             payload['query'] = query
         
         await socket.emit('search_by_user', payload)
-        
+
+        return await future
+
+    # ==================== CHALLENGE / LEADERBOARD / ACHIEVEMENT EVENTS ====================
+
+    async def create_challenge(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a challenge / leaderboard.
+
+        Args:
+            params: {challengeId, metric, ranked?, channel?, resultWebhookUrl?, standingsUrl?}
+
+        Returns:
+            Dict containing the challenge creation ack data
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_create':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_create_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_create', params)
+
+        return await future
+
+    async def report_progress(self, params: Dict[str, Any]):
+        """
+        Report progress toward a challenge (fire-and-forget).
+
+        Args:
+            params: {challengeId, value, metric?, eventId?, cohort?, platform?, channel?}
+        """
+        socket = self._get_socket()
+        await socket.emit('challenge_progress', params)
+
+    async def complete_challenge(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Complete a challenge.
+
+        Args:
+            params: {challengeId, outcome, eventId?, reward?}
+                outcome in {completed, failed, expired, conceded, tied}
+                (win=completed+rank1, loss=failed, draw=tied, resign=conceded,
+                timeout=expired)
+
+        Returns:
+            Dict containing the completion ack data
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_complete':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_complete_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_complete', params)
+
+        return await future
+
+    async def unlock_achievement(self, params: Dict[str, Any]):
+        """
+        Unlock or progress an achievement (fire-and-forget).
+
+        Args:
+            params: {achievementId, name?, tier?, percentComplete?, challengeId?, channel?, ...}
+                percentComplete < 100 -> server broadcasts achievement_progress;
+                >= 100 or omitted -> achievement_unlock.
+        """
+        socket = self._get_socket()
+        await socket.emit('achievement_unlock', params)
+
+    async def get_standings(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get challenge standings / leaderboard.
+
+        Args:
+            params: {challengeId, limit?=20, offset?=0}
+
+        Returns:
+            {challengeId, metric, standings:[{identity, value, rank, cohort, platform}], yourRank}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_standings':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_standings_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_standings', params)
+
+        return await future
+
+    async def get_achievements(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Get achievement state.
+
+        Args:
+            params: {achievementId?}
+
+        Returns:
+            {achievements:[{achievementId, percentComplete, status, unlockedAt, name, tier}]}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'achievement_query':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('achievement_state', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('achievement_query', params or {})
+
+        return await future
+
+    async def send_challenge_invite(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Send a challenge invite to another user.
+
+        Args:
+            params: {toUserId, type?='match', payload?<=8KB, ttl?=300, channel?, inviteId?}
+
+        Returns:
+            {inviteId, toUserId, type, status:'pending', expiresAt}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_invite':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_invite_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_invite', params)
+
+        return await future
+
+    async def reply_challenge_invite(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Reply to a challenge invite.
+
+        Args:
+            params: {inviteId, accept:bool, reason?}
+
+        Returns:
+            {inviteId, accept, type, payload, channel}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_reply':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_reply_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_reply', params)
+
+        return await future
+
+    async def cancel_challenge_invite(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Cancel a pending challenge invite.
+
+        Args:
+            params: {inviteId}
+
+        Returns:
+            {inviteId}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_invite_cancel':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_invite_cancel_success', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_invite_cancel', params)
+
+        return await future
+
+    async def get_challenge_invites(self) -> Dict[str, Any]:
+        """
+        Get the current user's challenge invites.
+
+        Returns:
+            {invites:[...]}
+        """
+        socket = self._get_socket()
+
+        future = asyncio.Future()
+
+        def on_success(data):
+            if not future.done():
+                future.set_result(data)
+
+        def on_error(error):
+            if not future.done():
+                if error.get('event') == 'challenge_invites_query':
+                    future.set_exception(Exception(error.get('message', 'Unknown error')))
+
+        socket.once('challenge_invites', on_success)
+        socket.once('error', on_error)
+
+        await socket.emit('challenge_invites_query', {})
+
         return await future
