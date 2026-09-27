@@ -258,7 +258,65 @@ class OddSockets:
                 })
         
         return results
-    
+
+    async def get_usage_stats(self) -> Dict[str, Any]:
+        """
+        Fetch owner-scoped usage analytics for this tenant.
+
+        Queries the manager's /api/tenant/usage endpoint with the configured API
+        key. Only key-mode clients can call this: a keyless/token client carries
+        no owner scope for the manager to attribute usage to.
+
+        Returns:
+            Dict with keys: mau, dau, total_messages, error_rate, owner_scope,
+            detail, timestamp. Each tile (mau/dau/total_messages/error_rate) is a
+            number OR None; a None tile is preserved and never coerced to 0.
+
+        Raises:
+            OddSocketsError: If the client is in token/keyless mode.
+            ConnectionError: If the request fails or returns a non-200 status.
+        """
+        if self._is_token_mode() or not self.config.get('api_key'):
+            raise OddSocketsError(
+                'get_usage_stats requires an apiKey (keyless/token clients have '
+                'no owner scope to query)'
+            )
+
+        api_key = self.config['api_key']
+        # Resolve the manager exactly as the worker-selection call does.
+        manager_url = await self.manager_discovery.discover_manager_url(api_key)
+
+        headers = {
+            'X-API-Key': api_key,
+            'User-Agent': 'OddSockets-Python-SDK/1.0.0'
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    f"{manager_url}/api/tenant/usage",
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        raise ConnectionError(f"Usage stats request failed: {response.status}")
+
+                    data = await response.json() or {}
+        except aiohttp.ClientConnectorError as error:
+            raise ConnectionError('Manager is offline. Cannot fetch usage stats.') from error
+
+        tiles = data.get('tiles') or {}
+        # Preserve nulls: an absent/None tile stays None, it is never made 0.
+        return {
+            'mau': tiles.get('mau'),
+            'dau': tiles.get('dau'),
+            'total_messages': tiles.get('totalMessages'),
+            'error_rate': tiles.get('errorRate'),
+            'owner_scope': data.get('ownerScope'),
+            'detail': data.get('detail'),
+            'timestamp': data.get('timestamp')
+        }
+
     async def _get_worker_assignment(self):
         """
         Internal: Get worker assignment from manager

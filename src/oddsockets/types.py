@@ -103,6 +103,22 @@ class BulkResult(BaseModel):
     error: Optional[str] = Field(None, description="Error message if unsuccessful")
 
 
+class UsageStats(TypedDict):
+    """Owner-scoped usage analytics returned by OddSockets.get_usage_stats().
+
+    Each tile (mau/dau/total_messages/error_rate) is a number OR None; a None
+    tile is meaningful (no data) and is never coerced to 0.
+    """
+
+    mau: Optional[int]
+    dau: Optional[int]
+    total_messages: Optional[int]
+    error_rate: Optional[float]
+    owner_scope: Optional[str]
+    detail: Optional[Any]
+    timestamp: Optional[str]
+
+
 # Type aliases for callbacks
 MessageCallback = Union[
     Callable[[Message], None],
