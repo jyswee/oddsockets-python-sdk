@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Message size limits (industry standard - matches PubNub)
+# Platform message size limit, enforced server-side
 MESSAGE_SIZE_LIMITS = {
     'MAX_MESSAGE_SIZE': 32768,  # 32KB in bytes
     'MAX_MESSAGE_SIZE_KB': 32
@@ -45,7 +45,7 @@ def validate_message_size(message: Any) -> int:
         raise ValueError(
             f"Message size ({round(message_size / 1024)}KB) exceeds maximum allowed size of "
             f"{MESSAGE_SIZE_LIMITS['MAX_MESSAGE_SIZE_KB']}KB. "
-            f"This limit matches industry standards (PubNub, Socket.IO) for reliable real-time messaging."
+            f"Split the payload, or publish a reference to it instead."
         )
     
     return message_size

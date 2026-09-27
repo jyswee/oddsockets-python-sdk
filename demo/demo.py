@@ -15,7 +15,7 @@ Exercised surface: connect -> subscribe (+presence) -> publish -> receive
 -> presence -> unsubscribe -> disconnect.
 
 Run:
-    export ODDSOCKETS_API_KEY="ak_..."   # get a free key: see README
+    export ODDSOCKETS_API_KEY="ak_..."   # get an API key: see README
     pip install oddsockets
     python demo.py
 """
@@ -29,7 +29,7 @@ from oddsockets import OddSockets
 
 API_KEY = os.environ.get("ODDSOCKETS_API_KEY")
 if not API_KEY:
-    print("Missing ODDSOCKETS_API_KEY. Get a free key (see README), then:")
+    print("Missing ODDSOCKETS_API_KEY. Get an API key (see README), then:")
     print('  export ODDSOCKETS_API_KEY="ak_..."')
     sys.exit(1)
 

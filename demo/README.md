@@ -8,7 +8,7 @@ a message that reaches the subscriber can only have travelled through the OddSoc
 worker — so this doubles as an honest end-to-end regression test (no mocks, no local
 echo). It uses the exact SDK you would install.
 
-## 1. Get a free API key
+## 1. Get an API key
 
 Two-step email verification (no card required):
 
