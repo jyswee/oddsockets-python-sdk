@@ -39,8 +39,6 @@ Expected output:
 
 ```
 [connect] connecting both clients...
-[alice] worker [instance]
-[bob]   worker [instance]
 [connect] both connected
 [alice] subscribed to demo-... (presence on)
 [alice] received bob’s message (nonce matched) - real round-trip.

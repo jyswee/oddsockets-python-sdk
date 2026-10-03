@@ -44,8 +44,6 @@ async def main():
     subscriber = OddSockets({"api_key": API_KEY, "user_id": "alice", "auto_connect": False})
     publisher = OddSockets({"api_key": API_KEY, "user_id": "bob", "auto_connect": False})
 
-    subscriber.on("worker_assigned", lambda d: print("[alice] worker", d.get("worker_id")))
-    publisher.on("worker_assigned", lambda d: print("[bob]   worker", d.get("worker_id")))
     subscriber.on("error", lambda e: print("[alice] error", e))
     publisher.on("error", lambda e: print("[bob]   error", e))
 
